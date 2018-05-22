@@ -100,6 +100,7 @@ ___________________________________________*/
 integer tracercounter = 0;
 integer magazine;
 integer shooting = 0;
+integer unholstered;
 
 
 
@@ -115,32 +116,26 @@ Unholster() //function for unholstering the gun
 {
     if(unholster_animation != "")
     {
-        llRequestPermissions(llGetOwner(), PERMISSION_TRIGGER_ANIMATION);
         llStartAnimation(unholster_animation);
     }
     if(unholster_sound != "")llPlaySound(unholster_sound, volume);
     llSetLinkAlpha(LINK_SET, 1.0, ALL_SIDES);
-    llRequestPermissions(llGetOwner(), PERMISSION_TAKE_CONTROLS);
-    llTakeControls(CONTROL_ML_LBUTTON, TRUE, FALSE);
 }
 
 Holster() //function for holstering the gun
 {
     if(holster_animation != "")
     {
-        llRequestPermissions(llGetOwner(), PERMISSION_TRIGGER_ANIMATION);
         llStartAnimation(holster_animation);
     }
     if(holster_sound != "")llPlaySound(holster_sound, volume);
     llSetLinkAlpha(LINK_SET, 0.0, ALL_SIDES);
-    llReleaseControls();
 }
 
 Reload() //function for reloading the gun
 {
     if(reload_animation != "")
     {
-        llRequestPermissions(llGetOwner(), PERMISSION_TRIGGER_ANIMATION);
         llStartAnimation(reload_animation);
     }
     if(reload_sound != "")llPlaySound(reload_sound, volume);
@@ -150,7 +145,6 @@ Reload() //function for reloading the gun
 
 ShootBullet() //function that simulates a "shot" using raycast
 {
-    llRequestPermissions(llGetOwner(), PERMISSION_TRACK_CAMERA);
     float spread = bullet_spread * DEG_TO_RAD;
     rotation rot = llEuler2Rot(<0,llFrand(spread)-(spread/2.0),0>) * llEuler2Rot(<llFrand(TWO_PI),0,0>) * llGetCameraRot();
     vector pos = llGetCameraPos()+llRot2Fwd(llGetCameraRot());
@@ -225,7 +219,6 @@ FiringStart() //function to be called once when trigger is pulled
     if(firing_sound != "")llLoopSound(firing_sound, volume);
     if(firing_animation != "")
     {
-        llRequestPermissions(llGetOwner(), PERMISSION_TRIGGER_ANIMATION);
         llStartAnimation(firing_animation);
     }
     shooting = 1;
@@ -237,7 +230,6 @@ FiringStop() //function to be called once when trigger is released
     llStopSound();
     if(firing_animation != "")
     {
-        llRequestPermissions(llGetOwner(), PERMISSION_TRIGGER_ANIMATION);
         llStopAnimation(firing_animation);
     }
     shooting = 0;
@@ -252,6 +244,43 @@ LBA_AT(key id, integer dmg)
 }
 
 
+RequestPermissions()
+{
+    if(llGetAttached()) // Please don't ask for permissions unless they'll be auto-accepted
+    {
+        llRequestPermissions(llGetOwner(), 0
+            | PERMISSION_TAKE_CONTROLS
+            | PERMISSION_TRIGGER_ANIMATION
+            | PERMISSION_TRACK_CAMERA
+            );
+    }
+}
+
+ReleasePermissions()
+{
+    integer perms = llGetPermissions();
+    if(perms & PERMISSION_TAKE_CONTROLS)
+        llReleaseControls();
+    if(perms & PERMISSION_TRIGGER_ANIMATION)
+    {
+        list anims = [
+            firing_animation,
+            aiming_animation,
+            holding_animation,
+            reload_animation,
+            holster_animation,
+            unholster_animation
+            ];
+        integer i = ~llGetListLength(anims);
+        while(++i)
+        {
+            string anim = llList2String(anims, i);
+            if(llGetInventoryType(anim) == INVENTORY_ANIMATION)
+                llStopAnimation(anim);
+        }
+    }
+}
+
 
 
 
@@ -259,27 +288,45 @@ default
 {
     attach(key id)
     {
-        llSleep(1.0);
-        llResetScript();
+        if(id != NULL_KEY)
+            RequestPermissions();
+        else
+            ReleasePermissions();
+    }
+
+    changed(integer change)
+    {
+        if(change & CHANGED_OWNER)
+            llResetScript();
     }
     
     state_entry()
     {
-        llRequestPermissions(llGetOwner(), PERMISSION_TAKE_CONTROLS);
-        llTakeControls(CONTROL_ML_LBUTTON, TRUE, FALSE);
+        RequestPermissions();
         tracercounter = tracer_rate;
         magazine = magazine_size;
         llSetTimerEvent(0.55);
         llListen(listen_channel, "", llGetOwner(), "");
         llListen(-777, "", "", "");
+
+        if(unholstered)
+        {
+            unholstered = FALSE;
+            Unholster();
+            llSleep(0.022);
+        }
+    }
+
+    run_time_permissions(integer perm)
+    {
+        if(perm & PERMISSION_TAKE_CONTROLS)
+            llTakeControls(CONTROL_ML_LBUTTON, TRUE, FALSE);
     }
     
     listen(integer c, string n, key id, string m)
     {
         if(m == holster_command)
         {
-            Holster();
-            llSleep(0.022);
             state holstered;
         }
         else if(m == reload_command && magazine != magazine_size)
@@ -334,17 +381,32 @@ default
     
     timer()
     {
+        if(!llGetAttached())
+            return;
+
+        integer perm = llGetPermissions();
+        if(
+            !(perm & PERMISSION_TAKE_CONTROLS) || 
+            !(perm & PERMISSION_TRIGGER_ANIMATION) ||
+            !(perm & PERMISSION_TRACK_CAMERA))
+        {
+            RequestPermissions();
+        }
+
+
+        llTakeControls(CONTROL_ML_LBUTTON, TRUE, FALSE);
+
+
+
         if(llGetAgentInfo(llGetOwner())&AGENT_MOUSELOOK)
         {
             //continuously triggered while in mouselook
             if(aiming_animation != "")
             {
-                llRequestPermissions(llGetOwner(), PERMISSION_TRIGGER_ANIMATION);
                 llStartAnimation(aiming_animation);
             }
             if(holding_animation != "")
             {
-                llRequestPermissions(llGetOwner(), PERMISSION_TRIGGER_ANIMATION);
                 llStopAnimation(holding_animation);
             }
         }
@@ -353,15 +415,18 @@ default
             //continously triggered while out of mouselook
             if(holding_animation != "")
             {
-                llRequestPermissions(llGetOwner(), PERMISSION_TRIGGER_ANIMATION);
                 llStartAnimation(holding_animation);
             }
             if(aiming_animation != "")
             {
-                llRequestPermissions(llGetOwner(), PERMISSION_TRIGGER_ANIMATION);
                 llStopAnimation(aiming_animation);
             }
         }
+    }
+    state_exit()
+    {
+        Holster();
+        ReleasePermissions();
     }
 }
 
@@ -371,10 +436,6 @@ state holstered
 {
     state_entry()
     {
-        llRequestPermissions(llGetOwner(), PERMISSION_TRIGGER_ANIMATION);
-        if(firing_animation != "")llStopAnimation(firing_animation);
-        if(aiming_animation != "")llStopAnimation(aiming_animation);
-        if(holding_animation != "")llStopAnimation(holding_animation);
         llListen(listen_channel, "", llGetOwner(), "");
     }
     
@@ -382,8 +443,7 @@ state holstered
     {
         if(m == holster_command)
         {
-            Unholster();
-            llSleep(0.022);
+            unholstered = TRUE;
             state default;
         }
     }
